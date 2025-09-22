@@ -3,7 +3,7 @@ import { supabase } from '../lib/supabase';
 
 export const createBooking = async (req: Request, res: Response) => {
   const { sport, date, startTime, endTime, amount, createdBy } = req.body;
-
+//test
   const parsedDateMs = Date.parse(String(date));
   if (Number.isNaN(parsedDateMs)) return res.status(400).json({ error: 'Invalid date' });
 
