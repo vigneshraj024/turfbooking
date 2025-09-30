@@ -1,5 +1,6 @@
 import type { Request, Response } from 'express';
-import { supabase } from '../lib/supabase';
+import { supabase } from '../lib/supabase.js';
+import { logAudit } from '../lib/audit.js';
 
 export const createBooking = async (req: Request, res: Response) => {
   const { sport, date, startTime, endTime, amount, createdBy } = req.body;
@@ -9,16 +10,29 @@ export const createBooking = async (req: Request, res: Response) => {
 
   const toHHMM = (t: string) => parseInt(String(t).replace(':', ''), 10); // "10:00" -> 1000
 
-  const payload = { Sports: sport, Date: date, StartTime: startTime, EndTime: endTime, Amount: Number(amount), CreatedBy: createdBy };
+  const jwtUser = (req as any).user as { sub?: number | string; email?: string } | undefined;
+  const actorId = jwtUser?.sub ?? createdBy ?? null;
+  const actorEmail = jwtUser?.email ?? null;
+
+  const payload = { Sports: sport, Date: date, StartTime: startTime, EndTime: endTime, Amount: Number(amount), CreatedBy: actorId };
 
   const { data, error } = await supabase.from('Booking').insert([payload]).select().single();
   if (error) return res.status(500).json({ error: error.message });
+  await logAudit({
+    action: 'BOOKING_CREATE',
+    entity: 'Booking',
+    entityId: (data as any)?.Id ?? null,
+    actorId,
+    actorEmail,
+    meta: { sport, date, startTime, endTime, amount },
+  });
   res.status(201).json(data);
 };
 
 export const getBookings = async (req: Request, res: Response) => {
   const { date, sport } = req.query;
-
+  
+  console.log("getBookings");
   let q = supabase.from('Booking').select('*');
 
   if (date) q = q.eq('Date', String(date));      // no epoch conversion
@@ -39,6 +53,14 @@ export const deleteBooking = async (req: Request, res: Response) => {
 
   if (error) return res.status(500).json({ error: error.message });
   if (!data || data.length === 0) return res.status(404).json({ error: 'Booking not found' });
+  const jwtUser = (req as any).user as { sub?: number | string; email?: string } | undefined;
+  await logAudit({
+    action: 'BOOKING_DELETE',
+    entity: 'Booking',
+    entityId: idNum,
+    actorId: jwtUser?.sub ?? null,
+    actorEmail: jwtUser?.email ?? null,
+  });
   res.json({ message: 'Booking deleted' });
 };
 
@@ -96,5 +118,45 @@ export const getReport = async (req: Request, res: Response) => {
     });
   } catch (e: any) {
     res.status(500).json({ error: e?.message || 'Failed to generate report' });
+  }
+};
+
+// PATCH /api/bookings/:id/unlock
+export const unlockBooking = async (req: Request, res: Response) => {
+  try {
+    const idNum = Number(req.params.id);
+    const { reason, note } = req.body as { reason?: string; note?: string };
+
+    // Fetch booking details to include in audit meta
+    const { data: booking, error: fetchErr } = await supabase
+      .from('Booking')
+      .select('Id, Sports, Date, StartTime, EndTime, Amount')
+      .eq('Id', idNum)
+      .maybeSingle();
+    if (fetchErr) return res.status(500).json({ error: fetchErr.message });
+    if (!booking) return res.status(404).json({ error: 'Booking not found' });
+
+    const jwtUser = (req as any).user as { sub?: number | string; email?: string } | undefined;
+    await logAudit({
+      action: 'BOOKING_UNLOCK',
+      entity: 'Booking',
+      entityId: idNum,
+      actorId: jwtUser?.sub ?? null,
+      actorEmail: jwtUser?.email ?? null,
+      meta: {
+        sport: booking.Sports,
+        date: booking.Date,
+        startTime: booking.StartTime,
+        endTime: booking.EndTime,
+        amount: booking.Amount,
+        reason: reason ?? null,
+        note: note ?? null,
+      },
+    });
+
+    // Business logic: For now, just audit. If later you add columns like IsLocked/UnlockedAt, update them here.
+    res.json({ ok: true, message: 'Booking unlocked (audited)', id: idNum });
+  } catch (e: any) {
+    res.status(500).json({ error: e?.message || 'Failed to unlock booking' });
   }
 };

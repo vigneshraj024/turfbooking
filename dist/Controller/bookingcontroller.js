@@ -4,6 +4,7 @@ exports.getReport = exports.deleteBooking = exports.getBookings = exports.create
 const supabase_1 = require("../lib/supabase");
 const createBooking = async (req, res) => {
     const { sport, date, startTime, endTime, amount, createdBy } = req.body;
+    //test v3
     const parsedDateMs = Date.parse(String(date));
     if (Number.isNaN(parsedDateMs))
         return res.status(400).json({ error: 'Invalid date' });
