@@ -87,7 +87,7 @@ app.use('/api/auth', authRouter);            // Public (login/register)
 app.use('/api/bookings', auth, bookingRouter); // Protected (requires login)
 app.use('/api/admins', auth, adminRouter);     // Admin management
 app.use('/api/prices', auth, priceRouter);     // Price master
-app.use('/api/audits', auth, auditRouter);     // Audit logs query
+app.use('/api/booking/audits', auth, auditRouter);     // Audit logs query
 
 app.get('/health', (_req, res) => res.json({ ok: true }));
 
