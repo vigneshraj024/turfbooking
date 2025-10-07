@@ -1,24 +1,33 @@
-"use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.getReport = exports.deleteBooking = exports.getBookings = exports.createBooking = void 0;
-const supabase_1 = require("../lib/supabase");
-const createBooking = async (req, res) => {
+import { supabase } from '../lib/supabase.js';
+import { logAudit } from '../lib/audit.js';
+export const createBooking = async (req, res) => {
     const { sport, date, startTime, endTime, amount, createdBy } = req.body;
     //test v3
     const parsedDateMs = Date.parse(String(date));
     if (Number.isNaN(parsedDateMs))
         return res.status(400).json({ error: 'Invalid date' });
     const toHHMM = (t) => parseInt(String(t).replace(':', ''), 10); // "10:00" -> 1000
-    const payload = { Sports: sport, Date: date, StartTime: startTime, EndTime: endTime, Amount: Number(amount), CreatedBy: createdBy };
-    const { data, error } = await supabase_1.supabase.from('Booking').insert([payload]).select().single();
+    const jwtUser = req.user;
+    const actorId = jwtUser?.sub ?? createdBy ?? null;
+    const actorEmail = jwtUser?.email ?? null;
+    const payload = { Sports: sport, Date: date, StartTime: startTime, EndTime: endTime, Amount: Number(amount), CreatedBy: actorId };
+    const { data, error } = await supabase.from('Booking').insert([payload]).select().single();
     if (error)
         return res.status(500).json({ error: error.message });
+    await logAudit({
+        action: 'BOOKING_CREATE',
+        entity: 'Booking',
+        entityId: data?.Id ?? null,
+        actorId,
+        actorEmail,
+        meta: { sport, date, startTime, endTime, amount },
+    });
     res.status(201).json(data);
 };
-exports.createBooking = createBooking;
-const getBookings = async (req, res) => {
+export const getBookings = async (req, res) => {
     const { date, sport } = req.query;
-    let q = supabase_1.supabase.from('Booking').select('*');
+    console.log("getBookings");
+    let q = supabase.from('Booking').select('*');
     if (date)
         q = q.eq('Date', String(date)); // no epoch conversion
     if (sport)
@@ -28,10 +37,9 @@ const getBookings = async (req, res) => {
         return res.status(500).json({ error: error.message });
     res.json(data);
 };
-exports.getBookings = getBookings;
-const deleteBooking = async (req, res) => {
+export const deleteBooking = async (req, res) => {
     const idNum = Number(req.params.id);
-    const { data, error } = await supabase_1.supabase
+    const { data, error } = await supabase
         .from('Booking')
         .delete()
         .eq('Id', idNum)
@@ -40,10 +48,17 @@ const deleteBooking = async (req, res) => {
         return res.status(500).json({ error: error.message });
     if (!data || data.length === 0)
         return res.status(404).json({ error: 'Booking not found' });
+    const jwtUser = req.user;
+    await logAudit({
+        action: 'BOOKING_DELETE',
+        entity: 'Booking',
+        entityId: idNum,
+        actorId: jwtUser?.sub ?? null,
+        actorEmail: jwtUser?.email ?? null,
+    });
     res.json({ message: 'Booking deleted' });
 };
-exports.deleteBooking = deleteBooking;
-const getReport = async (req, res) => {
+export const getReport = async (req, res) => {
     try {
         // Optional filters: month (YYYY-MM), from (YYYY-MM-DD), to (YYYY-MM-DD), sport
         const { month, from, to, sport } = req.query;
@@ -65,7 +80,7 @@ const getReport = async (req, res) => {
             toDate = to;
         }
         // Base query with filters
-        let q = supabase_1.supabase.from('Booking').select('*');
+        let q = supabase.from('Booking').select('*');
         if (fromDate)
             q = q.gte('Date', fromDate);
         if (toDate)
@@ -99,4 +114,42 @@ const getReport = async (req, res) => {
         res.status(500).json({ error: e?.message || 'Failed to generate report' });
     }
 };
-exports.getReport = getReport;
+// PATCH /api/bookings/:id/unlock
+export const unlockBooking = async (req, res) => {
+    try {
+        const idNum = Number(req.params.id);
+        const { reason, note } = req.body;
+        // Fetch booking details to include in audit meta
+        const { data: booking, error: fetchErr } = await supabase
+            .from('Booking')
+            .select('Id, Sports, Date, StartTime, EndTime, Amount')
+            .eq('Id', idNum)
+            .maybeSingle();
+        if (fetchErr)
+            return res.status(500).json({ error: fetchErr.message });
+        if (!booking)
+            return res.status(404).json({ error: 'Booking not found' });
+        const jwtUser = req.user;
+        await logAudit({
+            action: 'BOOKING_UNLOCK',
+            entity: 'Booking',
+            entityId: idNum,
+            actorId: jwtUser?.sub ?? null,
+            actorEmail: jwtUser?.email ?? null,
+            meta: {
+                sport: booking.Sports,
+                date: booking.Date,
+                startTime: booking.StartTime,
+                endTime: booking.EndTime,
+                amount: booking.Amount,
+                reason: reason ?? null,
+                note: note ?? null,
+            },
+        });
+        // Business logic: For now, just audit. If later you add columns like IsLocked/UnlockedAt, update them here.
+        res.json({ ok: true, message: 'Booking unlocked (audited)', id: idNum });
+    }
+    catch (e) {
+        res.status(500).json({ error: e?.message || 'Failed to unlock booking' });
+    }
+};

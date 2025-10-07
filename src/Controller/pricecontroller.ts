@@ -1,94 +1,129 @@
 import type { Request, Response } from 'express';
-import { supabase } from '../lib/supabase.js';
-import { logAudit } from '../lib/audit.js';
+// import { supabase } from '../lib/supabase.js';
+// import { logAudit } from '../lib/audit.js';
+
+// In-memory storage for prices (replace with database later)
+interface PriceRecord {
+  Id: number;
+  Sport: string;
+  Price: number;
+  CreatedAt?: string;
+  UpdatedAt?: string;
+}
+
+let prices: PriceRecord[] = [
+  { Id: 1, Sport: 'Cricket', Price: 800, CreatedAt: new Date().toISOString() },
+  { Id: 2, Sport: 'Football', Price: 700, CreatedAt: new Date().toISOString() },
+  { Id: 3, Sport: 'Badminton', Price: 400, CreatedAt: new Date().toISOString() },
+  { Id: 4, Sport: 'Pickleball', Price: 500, CreatedAt: new Date().toISOString() },
+  { Id: 5, Sport: 'Gaming', Price: 300, CreatedAt: new Date().toISOString() },
+  { Id: 6, Sport: 'Party', Price: 1000, CreatedAt: new Date().toISOString() }
+];
+
+let nextId = 7;
 
 // Table: PriceMaster (Id, Sport, Price, CreatedAt, UpdatedAt)
 // Optionally add: CreatedBy, UpdatedBy in DB; we still capture actor in audit logs.
 
 export const listPrices = async (_req: Request, res: Response) => {
   console.log("listPrices");
-  
-  const { data, error } = await supabase
-    .from('PriceMaster')
-    .select('Id, Sport, Price, CreatedAt, UpdatedAt')
-    .order('Sport');
-  if (error) return res.status(500).json({ error: error.message });
-  res.json(data);
+
+  try {
+    res.json(prices);
+  } catch (error) {
+    console.error('Error getting prices:', error);
+    res.status(500).json({ error: 'Failed to get prices' });
+  }
 };
 
 export const getPriceById = async (req: Request, res: Response) => {
-  const id = Number(req.params.id);
-  const { data, error } = await supabase
-    .from('PriceMaster')
-    .select('Id, Sport, Price, CreatedAt, UpdatedAt')
-    .eq('Id', id)
-    .maybeSingle();
-  if (error) return res.status(500).json({ error: error.message });
-  if (!data) return res.status(404).json({ error: 'Price config not found' });
-  res.json(data);
+  try {
+    const id = Number(req.params.id);
+    const price = prices.find(p => p.Id === id);
+
+    if (!price) return res.status(404).json({ error: 'Price config not found' });
+    res.json(price);
+  } catch (error) {
+    console.error('Error getting price by ID:', error);
+    res.status(500).json({ error: 'Failed to get price' });
+  }
 };
 
 export const getPriceBySport = async (req: Request, res: Response) => {
-  const sport = String(req.params.sport);
-  const { data, error } = await supabase
-    .from('PriceMaster')
-    .select('Id, Sport, Price, CreatedAt, UpdatedAt')
-    .ilike('Sport', sport)
-    .maybeSingle();
-  if (error) return res.status(500).json({ error: error.message });
-  if (!data) return res.status(404).json({ error: 'Price config not found' });
-  res.json(data);
+  try {
+    const sport = String(req.params.sport);
+    const price = prices.find(p => p.Sport.toLowerCase() === sport.toLowerCase());
+
+    if (!price) return res.status(404).json({ error: 'Price config not found' });
+    res.json(price);
+  } catch (error) {
+    console.error('Error getting price by sport:', error);
+    res.status(500).json({ error: 'Failed to get price' });
+  }
 };
 
 export const createPrice = async (req: Request, res: Response) => {
-  const { sport, price } = req.body as { sport: string; price: number };
-  if (!sport || typeof price !== 'number') return res.status(400).json({ error: 'sport and price required' });
+  try {
+    const { sport, price } = req.body as { sport: string; price: number };
+    if (!sport || typeof price !== 'number') return res.status(400).json({ error: 'sport and price required' });
 
-  const { data, error } = await supabase
-    .from('PriceMaster')
-    .insert([{ Sport: sport, Price: price }])
-    .select('Id, Sport, Price, CreatedAt, UpdatedAt')
-    .single();
-  if (error) return res.status(500).json({ error: error.message });
+    const newPrice: PriceRecord = {
+      Id: nextId++,
+      Sport: sport,
+      Price: price,
+      CreatedAt: new Date().toISOString(),
+      UpdatedAt: new Date().toISOString(),
+    };
 
-  const actor = (req as any).user as { sub?: number | string; email?: string } | undefined;
-  await logAudit({ action: 'PRICE_CREATE', entity: 'PriceMaster', entityId: data.Id, actorId: actor?.sub ?? null, actorEmail: actor?.email ?? null, meta: { sport, price } });
-  res.status(201).json(data);
+    prices.push(newPrice);
+
+    // const actor = (req as any).user as { sub?: number | string; email?: string } | undefined;
+    // await logAudit({ action: 'PRICE_CREATE', entity: 'PriceMaster', entityId: data.Id, actorId: actor?.sub ?? null, actorEmail: actor?.email ?? null, meta: { sport, price } });
+    res.status(201).json(newPrice);
+  } catch (error) {
+    console.error('Error creating price:', error);
+    res.status(500).json({ error: 'Failed to create price' });
+  }
 };
 
 export const updatePrice = async (req: Request, res: Response) => {
-  const id = Number(req.params.id);
-  const { sport, price } = req.body as { sport?: string; price?: number };
-  const update: any = {};
-  if (sport) update.Sport = sport;
-  if (typeof price === 'number') update.Price = price;
+  try {
+    const id = Number(req.params.id);
+    const { sport, price } = req.body as { sport?: string; price?: number };
 
-  const { data, error } = await supabase
-    .from('PriceMaster')
-    .update(update)
-    .eq('Id', id)
-    .select('Id, Sport, Price, CreatedAt, UpdatedAt')
-    .maybeSingle();
-  if (error) return res.status(500).json({ error: error.message });
-  if (!data) return res.status(404).json({ error: 'Price config not found' });
+    const priceIndex = prices.findIndex(p => p.Id === id);
+    if (priceIndex === -1) return res.status(404).json({ error: 'Price config not found' });
 
-  const actor = (req as any).user as { sub?: number | string; email?: string } | undefined;
-  await logAudit({ action: 'PRICE_UPDATE', entity: 'PriceMaster', entityId: id, actorId: actor?.sub ?? null, actorEmail: actor?.email ?? null, meta: { sport, price } });
-  res.json(data);
+    const update: Partial<PriceRecord> = {};
+    if (sport) update.Sport = sport;
+    if (typeof price === 'number') update.Price = price;
+    update.UpdatedAt = new Date().toISOString();
+
+    const updatedPrice = { ...prices[priceIndex], ...update };
+    prices[priceIndex] = updatedPrice;
+
+    // const actor = (req as any).user as { sub?: number | string; email?: string } | undefined;
+    // await logAudit({ action: 'PRICE_UPDATE', entity: 'PriceMaster', entityId: id, actorId: actor?.sub ?? null, actorEmail: actor?.email ?? null, meta: { sport, price } });
+    res.json(updatedPrice);
+  } catch (error) {
+    console.error('Error updating price:', error);
+    res.status(500).json({ error: 'Failed to update price' });
+  }
 };
 
 export const deletePrice = async (req: Request, res: Response) => {
-  const id = Number(req.params.id);
-  const { data, error } = await supabase
-    .from('PriceMaster')
-    .delete()
-    .eq('Id', id)
-    .select('Id')
-    .maybeSingle();
-  if (error) return res.status(500).json({ error: error.message });
-  if (!data) return res.status(404).json({ error: 'Price config not found' });
+  try {
+    const id = Number(req.params.id);
+    const priceIndex = prices.findIndex(p => p.Id === id);
 
-  const actor = (req as any).user as { sub?: number | string; email?: string } | undefined;
-  await logAudit({ action: 'PRICE_DELETE', entity: 'PriceMaster', entityId: id, actorId: actor?.sub ?? null, actorEmail: actor?.email ?? null });
-  res.json({ message: 'Price config deleted' });
+    if (priceIndex === -1) return res.status(404).json({ error: 'Price config not found' });
+
+    const deletedPrice = prices.splice(priceIndex, 1)[0];
+    // const actor = (req as any).user as { sub?: number | string; email?: string } | undefined;
+    // await logAudit({ action: 'PRICE_DELETE', entity: 'PriceMaster', entityId: id, actorId: actor?.sub ?? null, actorEmail: actor?.email ?? null });
+    res.json({ message: 'Price config deleted' });
+  } catch (error) {
+    console.error('Error deleting price:', error);
+    res.status(500).json({ error: 'Failed to delete price' });
+  }
 };

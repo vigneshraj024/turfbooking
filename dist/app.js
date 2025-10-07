@@ -1,24 +1,82 @@
-"use strict";
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.app = void 0;
-const express_1 = __importDefault(require("express"));
-const cors_1 = __importDefault(require("cors"));
-const helmet_1 = __importDefault(require("helmet"));
-const bookingroutes_1 = __importDefault(require("./Routes/bookingroutes"));
-const authroutes_1 = __importDefault(require("./Routes/authroutes"));
-const auth_1 = require("./middleware/auth");
-require("dotenv/config");
-exports.app = (0, express_1.default)();
+import express from 'express';
+import cors from 'cors';
+import helmet from 'helmet';
+import bookingRouter from './Routes/bookingroutes.js';
+import authRouter from './Routes/authroutes.js';
+import { auth } from './middleware/auth.js';
+import adminRouter from './Routes/adminroutes.js';
+import priceRouter from './Routes/priceroutes.js';
+import auditRouter from './Routes/auditroutes.js';
+import coachingRouter from './Routes/coachingroutes.js';
+import 'dotenv/config';
+export const app = express();
 // Security & Middleware
-exports.app.use((0, helmet_1.default)());
-// Allow all origins in Functions; keep credentials support
-exports.app.use((0, cors_1.default)({ origin: true, credentials: true }));
-exports.app.use(express_1.default.json());
+app.use(helmet());
+// CORS: Configure allowed origins based on environment
+const isProduction = process.env.NODE_ENV === 'production';
+const allowedOrigins = isProduction
+    ? [
+        'https://sports-booking-turf50.web.app', // Production frontend
+        'https://sports-booking-turf50.firebaseapp.com', // Firebase auth domain
+        'https://turf50-5a2f5.web.app', // Fallback Firebase domain
+        'https://turf50-5a2f5.firebaseapp.com', // Fallback Firebase auth
+    ]
+    : [
+        'http://localhost:5173', // Vite dev server
+        'http://localhost:3000', // Common dev port
+        'http://127.0.0.1:5173', // Alternative localhost
+        'http://127.0.0.1:3000', // Alternative localhost
+        'http://localhost:4173', // Vite preview
+        process.env.FRONTEND_ORIGIN,
+    ];
+// Add any additional origins from environment variables
+const additionalOrigins = process.env.ALLOWED_ORIGINS
+    ? process.env.ALLOWED_ORIGINS.split(',').map(origin => origin.trim())
+    : [];
+const finalAllowedOrigins = [...new Set([...allowedOrigins, ...additionalOrigins])].filter(Boolean);
+// Log allowed origins for debugging
+console.log('Allowed CORS origins:', allowedOrigins);
+const corsOptions = {
+    origin: (origin, callback) => {
+        // Allow requests with no origin (like mobile apps or curl requests)
+        if (!origin)
+            return callback(null, true);
+        // In development, allow all origins for easier testing
+        if (!isProduction) {
+            console.log(`Allowing request from: ${origin}`);
+            return callback(null, true);
+        }
+        // In production, only allow whitelisted origins
+        if (finalAllowedOrigins.includes(origin)) {
+            return callback(null, true);
+        }
+        console.warn('Blocked by CORS:', origin);
+        console.warn('Allowed origins:', finalAllowedOrigins);
+        return callback(new Error(`Not allowed by CORS. Origin: ${origin}`));
+    },
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: [
+        'Content-Type',
+        'Authorization',
+        'X-Requested-With',
+        'Accept',
+        'Origin'
+    ],
+    exposedHeaders: ['Content-Range', 'X-Total-Count'],
+    maxAge: 86400, // 24 hours
+};
+// Apply CORS with the defined options
+app.use(cors(corsOptions));
+// Handle preflight requests
+app.options('*', cors(corsOptions));
+app.use(express.json());
 // Routes
-exports.app.use('/api/auth', authroutes_1.default); // Public (login/register)
-exports.app.use('/api/bookings', auth_1.auth, bookingroutes_1.default); // Protected (requires login)
-exports.app.get('/health', (_req, res) => res.json({ ok: true }));
-exports.default = exports.app;
+app.use('/api/auth', authRouter); // Public (login/register)
+app.use('/api/bookings', auth, bookingRouter); // Protected (requires login)
+app.use('/api/admins', auth, adminRouter); // Admin management
+app.use('/api/prices', auth, priceRouter); // Price master
+app.use('/api/audits', auth, auditRouter); // Audit logs query
+app.use('/api/coaching-timings', auth, coachingRouter); // Coaching class timings
+app.get('/health', (_req, res) => res.json({ ok: true }));
+export default app;
